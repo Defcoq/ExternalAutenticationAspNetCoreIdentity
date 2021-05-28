@@ -1,5 +1,7 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using System.Collections.Generic;
+using System.Linq;
+
 namespace ExampleApp.Controllers
 {
     class UserRecord
@@ -27,17 +29,81 @@ namespace ExampleApp.Controllers
         private static string expectedID = "MyClientID";
         private static string expectedSecret = "MyClientSecret";
         private static List<UserRecord> users = new List<UserRecord> {
-            new UserRecord() {
-                Id = "1", Name = "Alice", EmailAddress = "alice@example.com",
-                Password = "myexternalpassword"
-            },
-             new UserRecord {
-                Id = "2", Name = "Dora", EmailAddress = "dora@example.com",
-                Password = "myexternalpassword"
-             }
-        };
+        new UserRecord() {
+            Id = "1", Name = "Alice", EmailAddress = "alice@example.com",
+            Password = "myexternalpassword", Code = "12345", Token = "token1"
+        },
+        new UserRecord {
+            Id = "2", Name = "Dora", EmailAddress = "dora@example.com",
+            Password = "myexternalpassword", Code = "56789", Token = "token2"
+        }
+    };
         public IActionResult Authenticate([FromQuery] ExternalAuthInfo info)
          => expectedID == info.client_id ? View((info, string.Empty))
                  : View((info, "Unknown Client"));
+
+
+        [HttpPost]
+        public IActionResult Authenticate(ExternalAuthInfo info, string email,
+                string password)
+        {
+            if (string.IsNullOrEmpty(email) || string.IsNullOrEmpty(password))
+            {
+                ModelState.AddModelError("", "Email and password required");
+            }
+            else
+            {
+                UserRecord user = users.FirstOrDefault(u =>
+                    u.EmailAddress.Equals(email) && u.Password.Equals(password));
+                if (user != null)
+                {
+                    return Redirect(info.redirect_uri
+                        + $"?code={user.Code}&scope={info.scope}"
+                        + $"&state={info.state}");
+                }
+                else
+                {
+                    ModelState.AddModelError("", "Email or password incorrect");
+                }
+            }
+            return View((info, ""));
+        }
+
+        [HttpPost]
+        public IActionResult Exchange([FromBody] ExternalAuthInfo info)
+        {
+            UserRecord user = users.FirstOrDefault(user => user.Code.Equals(info.code));
+            if (user == null || info.client_id != expectedID
+                    || info.client_secret != expectedSecret)
+            {
+                return Json(new { error = "unauthorized_client" });
+            }
+            else
+            {
+                return Json(new
+                {
+                    access_token = user.Token,
+                    expires_in = 3600,
+                    scope = "openid+email+profile",
+                    token_type = "Bearer",
+                    info.state
+                });
+            }
+        }
+
+        [HttpGet]
+        public IActionResult Data([FromHeader] string authorization)
+        {
+            string token = authorization?[7..];
+            UserRecord user = users.FirstOrDefault(user => user.Token.Equals(token));
+            if (user != null)
+            {
+                return Json(new { user.Id, user.EmailAddress, user.Name });
+            }
+            else
+            {
+                return Json(new { error = "invalid_token" });
+            }
+        }
     }
 }
